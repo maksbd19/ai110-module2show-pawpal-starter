@@ -15,11 +15,26 @@
   - _ScheduledTask_ — wraps a Task with a concrete start/end time and a status (scheduled, postponed, delegated)
   - _DataStore_ — handles reading and writing the full owner graph (owner → pets → tasks) to a JSON file for persistence
 - What classes did you include, and what responsibilities did you assign to each?
+  - The design includes 3 enums (`Priority`, `TaskCategory`, `TaskStatus`), 1 value object (`TimeWindow`), 3 domain entities (`Owner`, `Pet`, `Task`), 2 output types (`Schedule`, `ScheduledTask`), and 2 service classes (`Scheduler`, `DataStore`).
+  - `Owner` is the root of the data graph. It owns a list of `Pet` objects and a list of `TimeWindow` objects representing when the owner (or a sitter) is available during the day.
+  - `Pet` belongs to one owner and holds a list of `Task` objects. It is responsible for task CRUD — adding, editing, and deleting tasks assigned to that pet.
+  - `Task` is the core unit of care. It records the task name, description, category, priority, duration, and optionally a preferred time window. Each task represents one occurrence per day.
+  - `TimeWindow` is a shared value object used in two places: to express when the owner is available, and to express when a task is preferred to occur.
+  - `Scheduler` is a stateless service. It takes an owner, a pet, and a target date, then ranks tasks by priority, fits them into the owner's available windows, and returns a `Schedule`.
+  - `Schedule` is the output of the scheduler. It contains the list of successfully placed tasks, any tasks that could not fit, warnings when total required time exceeds available time, and optional suggestions for unscheduled tasks.
+  - `ScheduledTask` wraps a `Task` with a concrete start time, end time, and a status value (scheduled, postponed, or delegated).
+  - `DataStore` handles all JSON file I/O. It saves and loads the full owner graph (owner → pets → tasks) and stores generated schedules so the app does not need to regenerate them on every page refresh.
 
 **b. Design changes**
 
 - Did your design change during implementation?
+  - Yes. Several changes were made during the design review phase before implementation began.
 - If yes, describe at least one change and why you made it.
+  - **Removed recurring tasks (`Frequency`, `FrequencyUnit`)** — the initial design supported tasks with a recurrence frequency (e.g. twice per day). This was dropped in favor of one task per day to keep the scheduler logic simple and the data model flat. Recurring tasks would have required an expansion step before scheduling and made the `total_required_minutes` calculation more complex.
+  - **Removed task grouping** — the initial design allowed tasks to have a parent/subtask relationship for grouping related care activities. This was deferred from the MVP to avoid the added complexity of recursive structures in both the scheduler and the JSON persistence layer.
+  - **Removed `_detect_conflicts` from `Scheduler`** — the initial skeleton included a conflict detection method. After reviewing the scheduler design, it was determined that a sequential greedy placement strategy makes overlapping tasks structurally impossible, so the method was redundant and removed.
+  - **Added `pet_id` to `Task`** — not present in the initial design. Added as a back-reference so that `DataStore` can reconstruct task ownership during deserialization without relying solely on the nested JSON structure.
+  - **Added `owner_id` parameter to `DataStore.load_owner()`** — the initial signature took no arguments, implying a single-user system. Adding the parameter makes the intent explicit and leaves room for multi-user support later.
 
 ---
 

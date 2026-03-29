@@ -26,13 +26,6 @@ class TaskCategory(Enum):
     OTHER = "other"
 
 
-class FrequencyUnit(Enum):
-    HOUR = "hour"
-    DAY = "day"
-    WEEK = "week"
-    MONTH = "month"
-
-
 class TaskStatus(Enum):
     SCHEDULED = "scheduled"
     POSTPONED = "postponed"
@@ -50,15 +43,6 @@ class TimeWindow:
     end_time: time
 
 
-@dataclass
-class Frequency:
-    count: int
-    unit: FrequencyUnit
-
-    def __str__(self) -> str:
-        ...
-
-
 # ---------------------------------------------------------------------------
 # Domain Entities
 # ---------------------------------------------------------------------------
@@ -70,9 +54,8 @@ class Task:
     category: TaskCategory
     priority: Priority
     duration_minutes: int
-    is_recurring: bool = False
-    frequency: Optional[Frequency] = None
     preferred_window: Optional[TimeWindow] = None
+    pet_id: Optional[str] = None
     id: str = field(default_factory=lambda: str(uuid.uuid4()))
 
 
@@ -158,9 +141,6 @@ class Scheduler:
     ) -> list[ScheduledTask]:
         ...
 
-    def _detect_conflicts(self, scheduled: list[ScheduledTask]) -> list[str]:
-        ...
-
     def _suggest_actions(self, unscheduled: list[Task]) -> list[str]:
         ...
 
@@ -176,7 +156,7 @@ class DataStore:
     def save_owner(self, owner: Owner) -> None:
         ...
 
-    def load_owner(self) -> Optional[Owner]:
+    def load_owner(self, owner_id: str) -> Optional[Owner]:
         ...
 
     def save_schedule(self, schedule: Schedule) -> None:
