@@ -63,10 +63,10 @@ class Task:
     category: TaskCategory
     priority: Priority
     duration_minutes: int
+    pet_id: str
     preferred_window: Optional[TimeWindow] = None
     frequency: Frequency = Frequency.DAILY
     completed: bool = False
-    pet_id: Optional[str] = None
     id: str = field(default_factory=lambda: str(uuid.uuid4()))
 
 
@@ -80,9 +80,28 @@ class Pet:
     tasks: list[Task] = field(default_factory=list)
     id: str = field(default_factory=lambda: str(uuid.uuid4()))
 
-    def add_task(self, task: Task) -> None:
-        task.pet_id = self.id
+    def add_task(
+        self,
+        name: str,
+        description: str,
+        category: TaskCategory,
+        priority: Priority,
+        duration_minutes: int,
+        preferred_window: Optional[TimeWindow] = None,
+        frequency: Frequency = Frequency.DAILY,
+    ) -> Task:
+        task = Task(
+            name=name,
+            description=description,
+            category=category,
+            priority=priority,
+            duration_minutes=duration_minutes,
+            preferred_window=preferred_window,
+            frequency=frequency,
+            pet_id=self.id,
+        )
         self.tasks.append(task)
+        return task
 
     def edit_task(self, task_id: str, **updates) -> None:
         task = next((t for t in self.tasks if t.id == task_id), None)
@@ -175,7 +194,7 @@ def _minutes_to_time(minutes: int) -> time:
 class Scheduler:
 
     def generate(self, owner: Owner, target_date: date) -> Schedule:
-        tasks = owner.get_all_tasks()
+        tasks = [t for t in owner.get_all_tasks() if t.pet_id is not None]
         total_required = sum(t.duration_minutes for t in tasks)
         total_available = sum(
             _time_to_minutes(w.end_time) - _time_to_minutes(w.start_time)
@@ -339,7 +358,7 @@ def _deserialize_task(d: dict) -> Task:
         preferred_window=_deserialize_window(d["preferred_window"]) if d.get("preferred_window") else None,
         frequency=Frequency(d.get("frequency", Frequency.DAILY.value)),
         completed=d.get("completed", False),
-        pet_id=d.get("pet_id"),
+        pet_id=d["pet_id"],
     )
 
 

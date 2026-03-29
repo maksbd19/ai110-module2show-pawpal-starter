@@ -46,8 +46,13 @@ def evening_window():
 
 
 @pytest.fixture
-def walk_task(morning_window):
-    return Task(
+def pet():
+    return Pet(name="Buddy", species="dog", age=3, breed="Labrador")
+
+
+@pytest.fixture
+def walk_task(pet, morning_window):
+    return pet.add_task(
         name="Morning Walk",
         description="30-minute walk around the block",
         category=TaskCategory.DAILY_ACTIVITY,
@@ -58,8 +63,8 @@ def walk_task(morning_window):
 
 
 @pytest.fixture
-def feed_task():
-    return Task(
+def feed_task(pet):
+    return pet.add_task(
         name="Breakfast",
         description="Feed kibble with supplements",
         category=TaskCategory.FOOD,
@@ -69,8 +74,8 @@ def feed_task():
 
 
 @pytest.fixture
-def low_priority_task():
-    return Task(
+def low_priority_task(pet):
+    return pet.add_task(
         name="Nail Trim",
         description="Trim nails with pet clipper",
         category=TaskCategory.GROOMING,
@@ -80,16 +85,9 @@ def low_priority_task():
 
 
 @pytest.fixture
-def pet(walk_task, feed_task):
-    p = Pet(name="Buddy", species="dog", age=3, breed="Labrador")
-    p.tasks = [walk_task, feed_task]
-    return p
-
-
-@pytest.fixture
-def owner(pet, morning_window, evening_window):
+def owner(pet, morning_window, evening_window, walk_task, feed_task):
     o = Owner(name="Alex")
-    o.pets = [pet]
+    o.add_pet(pet)
     o.available_windows = [morning_window, evening_window]
     return o
 
@@ -112,16 +110,16 @@ class TestModels:
         assert walk_task.duration_minutes == 30
         assert walk_task.id is not None
 
-    def test_task_ids_are_unique(self):
-        t1 = Task("A", "", TaskCategory.OTHER, Priority.LOW, 5)
-        t2 = Task("B", "", TaskCategory.OTHER, Priority.LOW, 5)
+    def test_task_ids_are_unique(self, pet):
+        t1 = pet.add_task("A", "", TaskCategory.OTHER, Priority.LOW, 5)
+        t2 = pet.add_task("B", "", TaskCategory.OTHER, Priority.LOW, 5)
         assert t1.id != t2.id
 
     def test_pet_creation(self, pet):
         assert pet.name == "Buddy"
         assert pet.species == "dog"
         assert pet.age == 3
-        assert len(pet.tasks) == 2
+        assert len(pet.tasks) == 0
 
     def test_owner_creation(self, owner, pet):
         assert owner.name == "Alex"
@@ -151,9 +149,15 @@ class TestPetTaskCRUD:
 
     def test_add_task_appends_to_pet(self, pet, low_priority_task):
         initial_count = len(pet.tasks)
-        pet.add_task(low_priority_task)
+        new_task = pet.add_task(
+            name="Bath",
+            description="Monthly bath",
+            category=TaskCategory.GROOMING,
+            priority=Priority.LOW,
+            duration_minutes=20,
+        )
         assert len(pet.tasks) == initial_count + 1
-        assert low_priority_task in pet.tasks
+        assert new_task in pet.tasks
 
     def test_edit_task_updates_field(self, pet, walk_task):
         pet.edit_task(walk_task.id, duration_minutes=45)
@@ -245,9 +249,9 @@ class TestScheduler:
         tight_window = TimeWindow("tiny", time(8, 0), time(8, 20))  # only 20 min
         owner = Owner(name="Busy", available_windows=[tight_window])
         pet = Pet(name="Max", species="dog", age=1)
-        pet.add_task(Task("Walk", "", TaskCategory.DAILY_ACTIVITY, Priority.HIGH, 30))
-        pet.add_task(Task("Feed", "", TaskCategory.FOOD, Priority.CRITICAL, 10))
         owner.add_pet(pet)
+        pet.add_task("Walk", "", TaskCategory.DAILY_ACTIVITY, Priority.HIGH, 30)
+        pet.add_task("Feed", "", TaskCategory.FOOD, Priority.CRITICAL, 10)
 
         scheduler = Scheduler()
         result = scheduler.generate(owner, date.today())
@@ -258,8 +262,8 @@ class TestScheduler:
         tight_window = TimeWindow("tiny", time(8, 0), time(8, 5))  # only 5 min
         owner = Owner(name="Busy", available_windows=[tight_window])
         pet = Pet(name="Max", species="dog", age=1)
-        pet.add_task(Task("Walk", "", TaskCategory.DAILY_ACTIVITY, Priority.HIGH, 60))
         owner.add_pet(pet)
+        pet.add_task("Walk", "", TaskCategory.DAILY_ACTIVITY, Priority.HIGH, 60)
 
         scheduler = Scheduler()
         result = scheduler.generate(owner, date.today())
@@ -270,8 +274,8 @@ class TestScheduler:
         tight_window = TimeWindow("tiny", time(8, 0), time(8, 10))
         owner = Owner(name="Busy", available_windows=[tight_window])
         pet = Pet(name="Max", species="dog", age=1)
-        pet.add_task(Task("Walk", "", TaskCategory.DAILY_ACTIVITY, Priority.LOW, 60))
         owner.add_pet(pet)
+        pet.add_task("Walk", "", TaskCategory.DAILY_ACTIVITY, Priority.LOW, 60)
 
         scheduler = Scheduler()
         result = scheduler.generate(owner, date.today())
