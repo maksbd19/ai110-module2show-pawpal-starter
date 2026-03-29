@@ -90,6 +90,7 @@ class Pet:
         preferred_window: Optional[TimeWindow] = None,
         frequency: Frequency = Frequency.DAILY,
     ) -> Task:
+        """Create a new Task for this pet and append it to the pet's task list."""
         task = Task(
             name=name,
             description=description,
@@ -104,6 +105,7 @@ class Pet:
         return task
 
     def edit_task(self, task_id: str, **updates) -> None:
+        """Update one or more fields on an existing task by its ID."""
         task = next((t for t in self.tasks if t.id == task_id), None)
         if task is None:
             raise ValueError(f"Task '{task_id}' not found")
@@ -111,6 +113,7 @@ class Pet:
             setattr(task, key, value)
 
     def delete_task(self, task_id: str) -> None:
+        """Remove a task from this pet by its ID, raising ValueError if not found."""
         task = next((t for t in self.tasks if t.id == task_id), None)
         if task is None:
             raise ValueError(f"Task '{task_id}' not found")
@@ -125,9 +128,11 @@ class Owner:
     id: str = field(default_factory=lambda: str(uuid.uuid4()))
 
     def add_pet(self, pet: Pet) -> None:
+        """Add a Pet to this owner's pet list."""
         self.pets.append(pet)
 
     def edit_pet(self, pet_id: str, **updates) -> None:
+        """Update one or more fields on an existing pet by its ID."""
         pet = next((p for p in self.pets if p.id == pet_id), None)
         if pet is None:
             raise ValueError(f"Pet '{pet_id}' not found")
@@ -135,6 +140,7 @@ class Owner:
             setattr(pet, key, value)
 
     def delete_pet(self, pet_id: str) -> None:
+        """Remove a pet from this owner by its ID, raising ValueError if not found."""
         pet = next((p for p in self.pets if p.id == pet_id), None)
         if pet is None:
             raise ValueError(f"Pet '{pet_id}' not found")
@@ -184,16 +190,19 @@ _PRIORITY_RANK = {
 
 
 def _time_to_minutes(t: time) -> int:
+    """Convert a time object to total minutes since midnight."""
     return t.hour * 60 + t.minute
 
 
 def _minutes_to_time(minutes: int) -> time:
+    """Convert total minutes since midnight to a time object."""
     return time(minutes // 60, minutes % 60)
 
 
 class Scheduler:
 
     def generate(self, owner: Owner, target_date: date) -> Schedule:
+        """Build a daily Schedule by fitting prioritized tasks into the owner's available windows."""
         tasks = [t for t in owner.get_all_tasks() if t.pet_id is not None]
         total_required = sum(t.duration_minutes for t in tasks)
         total_available = sum(
@@ -228,6 +237,7 @@ class Scheduler:
         )
 
     def _prioritize(self, tasks: list[Task]) -> list[Task]:
+        """Return tasks sorted from highest to lowest priority."""
         return sorted(tasks, key=lambda t: _PRIORITY_RANK[t.priority], reverse=True)
 
     def _fit_into_windows(
@@ -235,6 +245,7 @@ class Scheduler:
         tasks: list[Task],
         windows: list[TimeWindow],
     ) -> list[ScheduledTask]:
+        """Greedily assign tasks to time windows, respecting preferred windows and durations."""
         # Track the current fill position (in minutes from midnight) for each window
         cursors = [_time_to_minutes(w.start_time) for w in windows]
         ends = [_time_to_minutes(w.end_time) for w in windows]
@@ -288,6 +299,7 @@ class Scheduler:
         return False
 
     def _suggest_actions(self, unscheduled: list[Task]) -> list[str]:
+        """Generate delegation or postponement suggestions for tasks that couldn't be scheduled."""
         suggestions = []
         for task in unscheduled:
             if task.priority in (Priority.CRITICAL, Priority.HIGH):
@@ -308,15 +320,18 @@ class Scheduler:
 # ---------------------------------------------------------------------------
 
 def _serialize_time(t: time) -> str:
+    """Format a time object as an 'HH:MM' string."""
     return t.strftime("%H:%M")
 
 
 def _deserialize_time(s: str) -> time:
+    """Parse an 'HH:MM' string into a time object."""
     h, m = s.split(":")
     return time(int(h), int(m))
 
 
 def _serialize_window(w: TimeWindow) -> dict:
+    """Serialize a TimeWindow to a JSON-compatible dict."""
     return {
         "label": w.label,
         "start_time": _serialize_time(w.start_time),
@@ -325,6 +340,7 @@ def _serialize_window(w: TimeWindow) -> dict:
 
 
 def _deserialize_window(d: dict) -> TimeWindow:
+    """Reconstruct a TimeWindow from a dict."""
     return TimeWindow(
         label=d["label"],
         start_time=_deserialize_time(d["start_time"]),
@@ -333,6 +349,7 @@ def _deserialize_window(d: dict) -> TimeWindow:
 
 
 def _serialize_task(t: Task) -> dict:
+    """Serialize a Task to a JSON-compatible dict."""
     return {
         "id": t.id,
         "name": t.name,
@@ -348,6 +365,7 @@ def _serialize_task(t: Task) -> dict:
 
 
 def _deserialize_task(d: dict) -> Task:
+    """Reconstruct a Task from a dict."""
     return Task(
         id=d["id"],
         name=d["name"],
@@ -363,6 +381,7 @@ def _deserialize_task(d: dict) -> Task:
 
 
 def _serialize_pet(p: Pet) -> dict:
+    """Serialize a Pet and its tasks to a JSON-compatible dict."""
     return {
         "id": p.id,
         "name": p.name,
@@ -375,6 +394,7 @@ def _serialize_pet(p: Pet) -> dict:
 
 
 def _deserialize_pet(d: dict) -> Pet:
+    """Reconstruct a Pet and its tasks from a dict."""
     pet = Pet(
         id=d["id"],
         name=d["name"],
@@ -388,6 +408,7 @@ def _deserialize_pet(d: dict) -> Pet:
 
 
 def _serialize_owner(o: Owner) -> dict:
+    """Serialize an Owner, their pets, and available windows to a JSON-compatible dict."""
     return {
         "id": o.id,
         "name": o.name,
@@ -397,6 +418,7 @@ def _serialize_owner(o: Owner) -> dict:
 
 
 def _deserialize_owner(d: dict) -> Owner:
+    """Reconstruct an Owner with their pets and available windows from a dict."""
     owner = Owner(
         id=d["id"],
         name=d["name"],
@@ -407,6 +429,7 @@ def _deserialize_owner(d: dict) -> Owner:
 
 
 def _serialize_scheduled_task(st: ScheduledTask) -> dict:
+    """Serialize a ScheduledTask to a JSON-compatible dict."""
     return {
         "task": _serialize_task(st.task),
         "start_time": _serialize_time(st.start_time),
@@ -416,6 +439,7 @@ def _serialize_scheduled_task(st: ScheduledTask) -> dict:
 
 
 def _deserialize_scheduled_task(d: dict) -> ScheduledTask:
+    """Reconstruct a ScheduledTask from a dict."""
     return ScheduledTask(
         task=_deserialize_task(d["task"]),
         start_time=_deserialize_time(d["start_time"]),
@@ -425,6 +449,7 @@ def _deserialize_scheduled_task(d: dict) -> ScheduledTask:
 
 
 def _serialize_schedule(s: Schedule) -> dict:
+    """Serialize a full Schedule (including owner and all tasks) to a JSON-compatible dict."""
     return {
         "id": s.id,
         "date": s.date.isoformat(),
@@ -440,6 +465,7 @@ def _serialize_schedule(s: Schedule) -> dict:
 
 
 def _deserialize_schedule(d: dict) -> Schedule:
+    """Reconstruct a full Schedule from a dict."""
     return Schedule(
         id=d["id"],
         date=date.fromisoformat(d["date"]),
@@ -459,21 +485,25 @@ class DataStore:
         self.file_path = file_path
 
     def _load_file(self) -> dict:
+        """Read and return the JSON data file, returning an empty store if it doesn't exist."""
         if not os.path.exists(self.file_path):
             return {"owners": {}, "schedules": {}}
         with open(self.file_path, "r", encoding="utf-8") as f:
             return json.load(f)
 
     def _save_file(self, data: dict) -> None:
+        """Write the given data dict to the JSON file, overwriting any existing content."""
         with open(self.file_path, "w", encoding="utf-8") as f:
             json.dump(data, f, indent=2)
 
     def save_owner(self, owner: Owner) -> None:
+        """Persist an Owner (and all their pets/tasks) to the data file."""
         data = self._load_file()
         data["owners"][owner.id] = _serialize_owner(owner)
         self._save_file(data)
 
     def load_owner(self, owner_id: str) -> Optional[Owner]:
+        """Load and return an Owner by ID, or None if not found."""
         data = self._load_file()
         raw = data["owners"].get(owner_id)
         if raw is None:
@@ -481,12 +511,14 @@ class DataStore:
         return _deserialize_owner(raw)
 
     def save_schedule(self, schedule: Schedule) -> None:
+        """Persist a Schedule to the data file, keyed by owner ID and date."""
         data = self._load_file()
         key = f"{schedule.owner.id}_{schedule.date.isoformat()}"
         data["schedules"][key] = _serialize_schedule(schedule)
         self._save_file(data)
 
     def load_schedule(self, owner_id: str, target_date: date) -> Optional[Schedule]:
+        """Load and return a Schedule for the given owner and date, or None if not found."""
         data = self._load_file()
         key = f"{owner_id}_{target_date.isoformat()}"
         raw = data["schedules"].get(key)

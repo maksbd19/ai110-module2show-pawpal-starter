@@ -10,9 +10,6 @@ Legend:
   [DATASTORE] — JSON persistence; will pass after implementation
 """
 
-import os
-import json
-import tempfile
 import pytest
 from datetime import date, time
 
@@ -24,7 +21,6 @@ from pawpal_system import (
     Schedule,
     ScheduledTask,
     Scheduler,
-    Task,
     TaskCategory,
     TaskStatus,
     TimeWindow,
@@ -513,6 +509,13 @@ class TestSchedulerDegenerate:
 
 class TestSchedulerStateMethods:
 
+    def test_mark_task_complete_sets_completed_flag(self, owner, pet, walk_task):
+        """mark_task_complete actually flips the task's completed field to True."""
+        assert walk_task.completed is False
+        result = Scheduler().mark_task_complete(owner, walk_task.id)
+        assert result is True
+        assert walk_task.completed is True
+
     def test_mark_task_complete_returns_false_for_unknown_id(self, owner):
         assert Scheduler().mark_task_complete(owner, "does-not-exist") is False
 
@@ -546,6 +549,14 @@ class TestSchedulerStateMethods:
 # ---------------------------------------------------------------------------
 
 class TestCRUDErrorCases:
+
+    def test_add_task_increases_pet_task_count(self, pet):
+        """Each call to add_task increments the pet's task list by exactly one."""
+        initial = len(pet.tasks)
+        pet.add_task("Nap", "Afternoon nap", TaskCategory.OTHER, Priority.LOW, 60)
+        assert len(pet.tasks) == initial + 1
+        pet.add_task("Bath", "Weekly bath", TaskCategory.GROOMING, Priority.MEDIUM, 20)
+        assert len(pet.tasks) == initial + 2
 
     def test_edit_task_nonexistent_id_raises(self, pet):
         with pytest.raises(ValueError):
