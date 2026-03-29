@@ -212,29 +212,29 @@ class TestOwnerPetCRUD:
 
 class TestScheduler:
 
-    def test_generate_returns_schedule(self, owner, pet):
+    def test_generate_returns_schedule(self, owner):
         scheduler = Scheduler()
-        result = scheduler.generate(owner, pet, date.today())
+        result = scheduler.generate(owner, date.today())
         assert isinstance(result, Schedule)
 
-    def test_schedule_is_for_correct_pet(self, owner, pet):
+    def test_schedule_is_for_correct_owner(self, owner):
         scheduler = Scheduler()
-        result = scheduler.generate(owner, pet, date.today())
-        assert result.pet.id == pet.id
+        result = scheduler.generate(owner, date.today())
+        assert result.owner.id == owner.id
 
-    def test_critical_tasks_are_scheduled_first(self, owner, pet, feed_task):
+    def test_critical_tasks_are_scheduled_first(self, owner):
         """CRITICAL priority tasks must appear before lower-priority ones."""
         scheduler = Scheduler()
-        result = scheduler.generate(owner, pet, date.today())
+        result = scheduler.generate(owner, date.today())
         critical = [st for st in result.scheduled_tasks if st.task.priority == Priority.CRITICAL]
         others = [st for st in result.scheduled_tasks if st.task.priority != Priority.CRITICAL]
         if critical and others:
             assert critical[-1].start_time <= others[0].start_time
 
-    def test_scheduled_tasks_fit_within_available_windows(self, owner, pet, morning_window, evening_window):
+    def test_scheduled_tasks_fit_within_available_windows(self, owner, morning_window, evening_window):
         """No scheduled task should start or end outside owner's time windows."""
         scheduler = Scheduler()
-        result = scheduler.generate(owner, pet, date.today())
+        result = scheduler.generate(owner, date.today())
         window_pairs = [(w.start_time, w.end_time) for w in owner.available_windows]
         for st in result.scheduled_tasks:
             fits = any(ws <= st.start_time and st.end_time <= we for ws, we in window_pairs)
@@ -250,7 +250,7 @@ class TestScheduler:
         owner.add_pet(pet)
 
         scheduler = Scheduler()
-        result = scheduler.generate(owner, pet, date.today())
+        result = scheduler.generate(owner, date.today())
         assert len(result.unscheduled_tasks) > 0
 
     def test_warnings_generated_when_time_is_insufficient(self):
@@ -262,7 +262,7 @@ class TestScheduler:
         owner.add_pet(pet)
 
         scheduler = Scheduler()
-        result = scheduler.generate(owner, pet, date.today())
+        result = scheduler.generate(owner, date.today())
         assert len(result.warnings) > 0
 
     def test_suggestions_provided_for_unscheduled_tasks(self):
@@ -274,13 +274,13 @@ class TestScheduler:
         owner.add_pet(pet)
 
         scheduler = Scheduler()
-        result = scheduler.generate(owner, pet, date.today())
+        result = scheduler.generate(owner, date.today())
         assert len(result.suggestions) > 0
 
-    def test_schedule_totals_are_accurate(self, owner, pet):
+    def test_schedule_totals_are_accurate(self, owner):
         scheduler = Scheduler()
-        result = scheduler.generate(owner, pet, date.today())
-        assert result.total_required_minutes == sum(t.duration_minutes for t in pet.tasks)
+        result = scheduler.generate(owner, date.today())
+        assert result.total_required_minutes == sum(t.duration_minutes for t in owner.get_all_tasks())
         assert result.total_available_minutes > 0
 
 
@@ -314,16 +314,16 @@ class TestDataStore:
         result = tmp_datastore.load_owner("nonexistent-id")
         assert result is None
 
-    def test_save_and_reload_schedule(self, tmp_datastore, owner, pet):
+    def test_save_and_reload_schedule(self, tmp_datastore, owner):
         scheduler = Scheduler()
-        schedule = scheduler.generate(owner, pet, date.today())
+        schedule = scheduler.generate(owner, date.today())
         tmp_datastore.save_schedule(schedule)
-        loaded = tmp_datastore.load_schedule(pet.id, date.today())
+        loaded = tmp_datastore.load_schedule(owner.id, date.today())
         assert loaded is not None
         assert loaded.id == schedule.id
 
-    def test_load_schedule_returns_none_when_missing(self, tmp_datastore, pet):
-        result = tmp_datastore.load_schedule(pet.id, date.today())
+    def test_load_schedule_returns_none_when_missing(self, tmp_datastore, owner):
+        result = tmp_datastore.load_schedule(owner.id, date.today())
         assert result is None
 
     def test_save_owner_overwrites_existing(self, tmp_datastore, owner):
