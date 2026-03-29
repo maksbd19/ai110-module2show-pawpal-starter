@@ -91,6 +91,8 @@ class Pet:
         frequency: Frequency = Frequency.DAILY,
     ) -> Task:
         """Create a new Task for this pet and append it to the pet's task list."""
+        if any(t.name.lower() == name.lower() for t in self.tasks):
+            raise ValueError(f"A task named '{name}' already exists for this pet.")
         task = Task(
             name=name,
             description=description,
@@ -129,6 +131,8 @@ class Owner:
 
     def add_pet(self, pet: Pet) -> None:
         """Add a Pet to this owner's pet list."""
+        if any(p.name.lower() == pet.name.lower() for p in self.pets):
+            raise ValueError(f"A pet named '{pet.name}' already exists.")
         self.pets.append(pet)
 
     def edit_pet(self, pet_id: str, **updates) -> None:
