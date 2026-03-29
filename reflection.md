@@ -5,6 +5,15 @@
 **a. Initial design**
 
 - Briefly describe your initial UML design.
+  - _Owner_ — the central entity; holds personal info, a list of pets, and available time windows that define when care can happen
+  - _Pet_ — belongs to an owner; stores species, age, and health notes; owns a list of tasks specific to that pet
+  - _Task_ — the core unit of work; captures what needs to be done, how long it takes, its priority, whether it recurs, and an optional preferred time window; tasks can be grouped using a parent/subtask relationship
+  - _Frequency_ — a value object attached to recurring tasks; expresses recurrence as a count + unit (e.g. twice per day, once per month)
+  - _TimeWindow_ — a reusable value object for both owner availability and task preferences; has a label, start time, and end time
+  - _Scheduler_ — takes an owner, a pet, and a target date; ranks tasks by priority, fits them into available time windows, detects conflicts, and produces a Schedule
+  - _Schedule_ — the output of the scheduler; contains an ordered list of scheduled tasks, any tasks that couldn't fit, warnings about time gaps between what's needed and what's available, and a summary of total required vs. available time
+  - _ScheduledTask_ — wraps a Task with a concrete start/end time and a status (scheduled, postponed, delegated)
+  - _DataStore_ — handles reading and writing the full owner graph (owner → pets → tasks) to a JSON file for persistence
 - What classes did you include, and what responsibilities did you assign to each?
 
 **b. Design changes**
