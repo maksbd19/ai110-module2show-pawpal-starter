@@ -683,3 +683,207 @@ class TestRecurringTasks:
         scheduler.mark_task_complete(owner, second.id)
         third = next(t for t in pet.tasks if not t.completed and t.name == walk_task.name)
         assert third.due_date == today + timedelta(days=2)
+
+    def test_completing_task_with_no_due_date_uses_today_as_base(self, owner, pet, walk_task):
+        """When due_date is None, the recurrence base is date.today() so next due = today + delta."""
+        pet.edit_task(walk_task.id, frequency=Frequency.DAILY, due_date=None)
+        assert walk_task.due_date is None
+        Scheduler().mark_task_complete(owner, walk_task.id)
+        new_task = next(t for t in pet.tasks if not t.completed and t.name == walk_task.name)
+        assert new_task.due_date == date.today() + timedelta(days=1)
+
+    def test_completing_same_task_twice_creates_two_recurring_instances(self, owner, pet, walk_task):
+        """Calling mark_task_complete on an already-completed task creates a second recurrence."""
+        today = date.today()
+        pet.edit_task(walk_task.id, frequency=Frequency.DAILY, due_date=today)
+        initial_count = len(pet.tasks)
+        scheduler = Scheduler()
+        scheduler.mark_task_complete(owner, walk_task.id)
+        # Call again on the same (now-completed) original task id
+        scheduler.mark_task_complete(owner, walk_task.id)
+        pending = [t for t in pet.tasks if not t.completed and t.name == walk_task.name]
+        # Two recurring instances should exist (one per completion call)
+        assert len(pet.tasks) == initial_count + 2
+        assert len(pending) == 2
+
+
+# ---------------------------------------------------------------------------
+# [SORTING] Chronological ordering via sort_by_time
+# ---------------------------------------------------------------------------
+
+class TestSortingCorrectness:
+
+    def test_sort_by_time_returns_chronological_order(self):
+        """Tasks with earlier preferred_window.start_time appear first."""
+        morning = TimeWindow("morning", time(8, 0), time(10, 0))
+        afternoon = TimeWindow("afternoon", time(13, 0), time(15, 0))
+        evening = TimeWindow("evening", time(18, 0), time(20, 0))
+        pet = Pet(name="Rex", species="dog", age=2)
+        t_eve = pet.add_task("Evening Walk", "", TaskCategory.DAILY_ACTIVITY, Priority.HIGH, 30, evening)
+        t_morn = pet.add_task("Breakfast", "", TaskCategory.FOOD, Priority.CRITICAL, 10, morning)
+        t_aft = pet.add_task("Lunch", "", TaskCategory.FOOD, Priority.MEDIUM, 10, afternoon)
+
+        sorted_tasks = Scheduler().sort_by_time(pet.tasks)
+        start_times = [t.preferred_window.start_time for t in sorted_tasks if t.preferred_window]
+        assert start_times == sorted(start_times), "Tasks must be in ascending start_time order"
+
+    def test_sort_by_time_tasks_without_window_go_last(self):
+        """Tasks with no preferred_window are placed after all windowed tasks."""
+        morning = TimeWindow("morning", time(8, 0), time(10, 0))
+        pet = Pet(name="Rex", species="dog", age=2)
+        t_no_window = pet.add_task("Nail Trim", "", TaskCategory.GROOMING, Priority.LOW, 15)
+        t_windowed = pet.add_task("Breakfast", "", TaskCategory.FOOD, Priority.CRITICAL, 10, morning)
+
+        sorted_tasks = Scheduler().sort_by_time(pet.tasks)
+        assert sorted_tasks[0].id == t_windowed.id, "Windowed task must come first"
+        assert sorted_tasks[-1].id == t_no_window.id, "No-window task must come last"
+
+    def test_sort_by_time_same_start_time_tiebreaks_by_priority(self):
+        """When two tasks share the same start_time, higher priority comes first."""
+        window = TimeWindow("morning", time(8, 0), time(10, 0))
+        pet = Pet(name="Rex", species="dog", age=2)
+        t_low = pet.add_task("Nail Trim", "", TaskCategory.GROOMING, Priority.LOW, 15, window)
+        t_crit = pet.add_task("Medication", "", TaskCategory.HEALTHCARE, Priority.CRITICAL, 5, window)
+
+        sorted_tasks = Scheduler().sort_by_time(pet.tasks)
+        assert sorted_tasks[0].id == t_crit.id, "CRITICAL must precede LOW at same start_time"
+
+    def test_sort_by_time_multiple_no_window_tasks_tiebreak_by_priority(self):
+        """Multiple no-window tasks at the end are themselves sorted by descending priority."""
+        pet = Pet(name="Rex", species="dog", age=2)
+        t_low = pet.add_task("Nail Trim", "", TaskCategory.GROOMING, Priority.LOW, 15)
+        t_high = pet.add_task("Vet Call", "", TaskCategory.HEALTHCARE, Priority.HIGH, 20)
+        t_med = pet.add_task("Play", "", TaskCategory.ENRICHMENT, Priority.MEDIUM, 10)
+
+        sorted_tasks = Scheduler().sort_by_time(pet.tasks)
+        # All have no window — should be sorted HIGH > MEDIUM > LOW
+        priorities = [t.priority for t in sorted_tasks]
+        from pawpal_system import _PRIORITY_RANK
+        ranks = [_PRIORITY_RANK[p] for p in priorities]
+        assert ranks == sorted(ranks, reverse=True), "No-window tasks must sort high→low priority"
+
+    def test_generate_sorts_tasks_by_due_date_then_priority(self):
+        """generate() output: earlier due_date comes first; same date → higher priority first."""
+        owner = Owner(name="Test")
+        pet = Pet(name="Rex", species="dog", age=2)
+        owner.add_pet(pet)
+
+        today = date.today()
+        tomorrow = today + timedelta(days=1)
+
+        t_tomorrow_crit = pet.add_task("Vet", "", TaskCategory.HEALTHCARE, Priority.CRITICAL, 10)
+        t_today_low = pet.add_task("Play", "", TaskCategory.ENRICHMENT, Priority.LOW, 20)
+        t_today_high = pet.add_task("Walk", "", TaskCategory.DAILY_ACTIVITY, Priority.HIGH, 30)
+
+        # Assign explicit due dates so generate() doesn't overwrite them
+        t_tomorrow_crit.due_date = tomorrow
+        t_today_low.due_date = today
+        t_today_high.due_date = today
+
+        result = Scheduler().generate(owner, today)
+        assert result.tasks[0].due_date == today, "today's tasks must come before tomorrow's"
+        assert result.tasks[1].due_date == today
+        assert result.tasks[2].due_date == tomorrow
+        # Within today: HIGH before LOW
+        today_tasks = [t for t in result.tasks if t.due_date == today]
+        assert today_tasks[0].priority == Priority.HIGH
+
+
+# ---------------------------------------------------------------------------
+# [CONFLICT] Conflict detection via detect_conflicts
+# ---------------------------------------------------------------------------
+
+class TestConflictDetection:
+
+    def test_no_conflict_when_tasks_fit_in_window(self):
+        """Two tasks that together fit inside the window produce no warnings."""
+        window = TimeWindow("morning", time(8, 0), time(9, 0))  # 60 min
+        pet = Pet(name="Rex", species="dog", age=2)
+        t1 = pet.add_task("Walk", "", TaskCategory.DAILY_ACTIVITY, Priority.HIGH, 30, window)
+        t2 = pet.add_task("Feed", "", TaskCategory.FOOD, Priority.CRITICAL, 20, window)
+
+        warnings, conflicted_ids = Scheduler().detect_conflicts([t1, t2])
+        assert warnings == []
+        assert conflicted_ids == set()
+
+    def test_conflict_flagged_when_tasks_overflow_window(self):
+        """When tasks exceed the window, the overflowing task is in conflicted_task_ids."""
+        window = TimeWindow("morning", time(8, 0), time(8, 30))  # 30 min total
+        pet = Pet(name="Rex", species="dog", age=2)
+        t_crit = pet.add_task("Feed", "", TaskCategory.FOOD, Priority.CRITICAL, 20, window)
+        t_high = pet.add_task("Walk", "", TaskCategory.DAILY_ACTIVITY, Priority.HIGH, 20, window)
+        # CRITICAL (20 min) fills 20/30; HIGH (20 min) needs 20 more but only 10 remain → conflict
+
+        warnings, conflicted_ids = Scheduler().detect_conflicts([t_crit, t_high])
+        assert t_high.id in conflicted_ids
+        assert t_crit.id not in conflicted_ids
+
+    def test_lower_priority_task_is_flagged_not_higher(self):
+        """Higher-priority task claims time first; lower-priority task gets flagged."""
+        window = TimeWindow("morning", time(8, 0), time(8, 40))  # 40 min
+        pet = Pet(name="Rex", species="dog", age=2)
+        t_low = pet.add_task("Nail Trim", "", TaskCategory.GROOMING, Priority.LOW, 30, window)
+        t_crit = pet.add_task("Medication", "", TaskCategory.HEALTHCARE, Priority.CRITICAL, 30, window)
+        # CRITICAL takes 30 min (fits); LOW needs 30 more but only 10 remain → LOW flagged
+
+        warnings, conflicted_ids = Scheduler().detect_conflicts([t_low, t_crit])
+        assert t_low.id in conflicted_ids
+        assert t_crit.id not in conflicted_ids
+
+    def test_task_exactly_filling_window_has_no_conflict(self):
+        """A single task that exactly fills the window is not flagged (boundary is inclusive)."""
+        window = TimeWindow("morning", time(8, 0), time(8, 30))  # 30 min
+        pet = Pet(name="Rex", species="dog", age=2)
+        t = pet.add_task("Walk", "", TaskCategory.DAILY_ACTIVITY, Priority.HIGH, 30, window)
+
+        warnings, conflicted_ids = Scheduler().detect_conflicts([t])
+        assert t.id not in conflicted_ids
+        assert warnings == []
+
+    def test_task_overflowing_by_one_minute_is_flagged(self):
+        """A task that exceeds the window by exactly 1 minute triggers a conflict."""
+        window = TimeWindow("morning", time(8, 0), time(8, 30))  # 30 min
+        pet = Pet(name="Rex", species="dog", age=2)
+        t = pet.add_task("Walk", "", TaskCategory.DAILY_ACTIVITY, Priority.HIGH, 31, window)
+
+        warnings, conflicted_ids = Scheduler().detect_conflicts([t])
+        assert t.id in conflicted_ids
+        assert len(warnings) == 1
+
+    def test_warning_message_references_task_and_window(self):
+        """The conflict warning names the task and the window it overflowed."""
+        window = TimeWindow("morning", time(8, 0), time(8, 20))  # 20 min
+        pet = Pet(name="Rex", species="dog", age=2)
+        t_crit = pet.add_task("Feed", "", TaskCategory.FOOD, Priority.CRITICAL, 20, window)
+        t_high = pet.add_task("Walk", "", TaskCategory.DAILY_ACTIVITY, Priority.HIGH, 10, window)
+        # CRITICAL takes all 20 min; Walk has 0 min left → conflict
+
+        warnings, _ = Scheduler().detect_conflicts([t_crit, t_high])
+        assert len(warnings) == 1
+        assert "morning" in warnings[0]
+        assert "Walk" in warnings[0]
+
+    def test_tasks_in_different_windows_do_not_conflict(self):
+        """Tasks in separate windows are evaluated independently — no cross-window conflict."""
+        morning = TimeWindow("morning", time(8, 0), time(8, 30))  # 30 min
+        evening = TimeWindow("evening", time(18, 0), time(18, 30))  # 30 min
+        pet = Pet(name="Rex", species="dog", age=2)
+        t1 = pet.add_task("Walk", "", TaskCategory.DAILY_ACTIVITY, Priority.HIGH, 30, morning)
+        t2 = pet.add_task("Feed", "", TaskCategory.FOOD, Priority.CRITICAL, 30, evening)
+
+        warnings, conflicted_ids = Scheduler().detect_conflicts([t1, t2])
+        assert warnings == []
+        assert conflicted_ids == set()
+
+    def test_conflict_detected_in_generated_schedule(self):
+        """generate() surfaces conflict metadata when the window is too tight."""
+        window = TimeWindow("morning", time(8, 0), time(8, 30))  # 30 min
+        owner = Owner(name="Test", available_windows=[window])
+        pet = Pet(name="Rex", species="dog", age=2)
+        owner.add_pet(pet)
+        t_crit = pet.add_task("Feed", "", TaskCategory.FOOD, Priority.CRITICAL, 20, window)
+        t_high = pet.add_task("Walk", "", TaskCategory.DAILY_ACTIVITY, Priority.HIGH, 20, window)
+
+        result = Scheduler().generate(owner, date.today())
+        assert t_high.id in result.conflicted_task_ids
+        assert len(result.warnings) >= 1
