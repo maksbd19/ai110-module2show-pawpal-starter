@@ -155,6 +155,19 @@ class Owner:
         """Return every task across all pets."""
         return [task for pet in self.pets for task in pet.tasks]
 
+    def save_to_json(self, file_path: str = "data.json") -> None:
+        """Persist this owner (pets, tasks, windows) to a JSON file via DataStore."""
+        DataStore(file_path).save_owner(self)
+
+    @classmethod
+    def load_from_json(cls, file_path: str = "data.json") -> "Optional[Owner]":
+        """Load the first owner found in a JSON file. Returns None if not found."""
+        store = DataStore(file_path)
+        data = store._load_file()
+        for owner_id in data.get("owners", {}):
+            return store.load_owner(owner_id)
+        return None
+
 
 # ---------------------------------------------------------------------------
 # Schedule Output

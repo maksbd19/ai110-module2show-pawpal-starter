@@ -1,72 +1,138 @@
-# PawPal+ (Module 2 Project)
+# PawPal+
 
-You are building **PawPal+**, a Streamlit app that helps a pet owner plan care tasks for their pet.
+**PawPal+** is a Streamlit app that helps pet owners plan and track daily care tasks across multiple pets. It applies several scheduling algorithms automatically to produce a conflict-aware, priority-ordered daily plan.
 
-## Scenario
+---
 
-A busy pet owner needs help staying consistent with pet care. They want an assistant that can:
+## 📸 Demo
 
-- Track pet care tasks (walks, feeding, meds, enrichment, grooming, etc.)
-- Consider constraints (time available, priority, owner preferences)
-- Produce a daily plan and explain why it chose that plan
+**Pet & task management** — add multiple pets and assign prioritised care tasks across categories.
 
-Your job is to design the system first (UML), then implement the logic in Python, then connect it to the Streamlit UI.
+<a href="./course_images/ai110/demo-1.png" target="_blank"><img src='./course_images/ai110/demo-1.png' title='PawPal App' width='' alt='PawPal App' class='center-block' /></a>
 
-## What you will build
+**Generated schedule** — priority-ordered daily plan with conflict detection, sort, and filter controls.
 
-Your final app should:
+<a href="./course_images/ai110/demo-2.png" target="_blank"><img src='./course_images/ai110/demo-2.png' title='PawPal App' width='' alt='PawPal App' class='center-block' /></a>
 
-- Let a user enter basic owner + pet info
-- Let a user add/edit tasks (duration + priority at minimum)
-- Generate a daily schedule/plan based on constraints and priorities
-- Display the plan clearly (and ideally explain the reasoning)
-- Include tests for the most important scheduling behaviors
+---
 
-## Getting started
+## Features
+
+### 1. Priority-Based Scheduling
+
+Tasks are ranked `CRITICAL > HIGH > MEDIUM > LOW`. When the scheduler generates a plan, it sorts all tasks by `(due_date, descending priority)` so critical care — medications, meals — always appears before lower-stakes activities. Within a shared time window, higher-priority tasks claim time slots first.
+
+### 2. Conflict Detection
+
+`Scheduler.detect_conflicts` groups tasks by their preferred time window, then greedily assigns start times in priority order using a cursor that advances by each task's duration. If a task would overflow the window's end time, it is flagged as a conflict. Flagged tasks appear with an `⚠️` warning indicator in the UI and in a collapsible conflict panel at the top of the schedule view.
+
+### 3. Window-Aware Greedy Placement
+
+`Scheduler._fit_into_windows` assigns concrete start and end times to tasks. Each time window maintains a cursor (the current fill position in minutes). For every task, the algorithm tries the preferred window first; if it is full, it falls back to the next available window in order. This keeps the schedule tight and prevents gaps.
+
+### 4. Actionable Suggestions
+
+Tasks that cannot fit in any available window trigger `Scheduler._suggest_actions`, which applies a decision rule based on priority:
+
+- **CRITICAL / HIGH** → recommend delegation to a pet sitter (skipping has welfare consequences).
+- **MEDIUM / LOW** → recommend postponement to tomorrow (one-day delay is acceptable).
+
+Suggestions are displayed in a collapsible panel below the conflict warnings.
+
+### 5. Recurring Task Automation
+
+Marking a task complete automatically creates a new pending instance with the correct next due date:
+
+- **Daily** → due date + 1 day
+- **Weekly** → due date + 7 days
+- **Monthly** → due date + 30 days
+- **Once** → no recurrence; task is simply marked done
+
+The spawned task inherits all properties (name, category, priority, duration, window) but receives a new unique ID, so recurring care never needs to be re-entered manually.
+
+### 6. Sorting by Time Window
+
+The generated schedule can be re-sorted via the **Sort by date & time** dropdown:
+
+- **Ascending** — `Scheduler.sort_by_time` orders tasks by `preferred_window.start_time` (earliest first). Tasks with no preferred window are placed at the end, sorted among themselves by descending priority.
+- **Descending** — the same list reversed.
+- **Default** — original priority/date ordering from schedule generation.
+
+### 7. Filtering by Pet and Status
+
+`Scheduler.filter_tasks` filters the displayed task list by:
+
+- **Pet** — shows only tasks belonging to a selected pet.
+- **Status** — shows All, Incomplete, or Completed tasks.
+
+Filters compose: selecting a pet and "Incomplete" shows only that pet's remaining tasks.
+
+### 8. Multi-Pet Support
+
+All pets owned by a user are scheduled together in a single plan. Tasks from different pets are merged and priority-ranked globally, so a CRITICAL task from one pet always precedes a HIGH task from another. Each task row in the schedule displays which pet it belongs to.
+
+### 9. Full CRUD for Pets and Tasks
+
+- **Add** a pet (name, species, age) or task (name, category, priority, duration, frequency, time window).
+- **Edit** any field inline — changes invalidate the current schedule so it can be regenerated.
+- **Delete** a pet (removes all its tasks) or an individual task, with a confirmation step to prevent accidents.
+- Duplicate pet names and duplicate task names per pet are rejected with a validation error.
+
+### 10. JSON Persistence
+
+`DataStore` persists the full owner state — pets, tasks, available windows, and completion flags — to a local `data.json` file. Schedules are stored separately under a `owner_id + date` key so plans for different dates never overwrite each other. The app auto-loads the saved owner on startup so state survives page refreshes and restarts.
+
+---
+
+## Getting Started
 
 ### Setup
 
 ```bash
 python -m venv .venv
-source .venv/bin/activate  # Windows: .venv\Scripts\activate
+source .venv/bin/activate   # Windows: .venv\Scripts\activate
 pip install -r requirements.txt
 ```
 
-### Suggested workflow
+### Run the app
 
-1. Read the scenario carefully and identify requirements and edge cases.
-2. Draft a UML diagram (classes, attributes, methods, relationships).
-3. Convert UML into Python class stubs (no logic yet).
-4. Implement scheduling logic in small increments.
-5. Add tests to verify key behaviors.
-6. Connect your logic to the Streamlit UI in `app.py`.
-7. Refine UML so it matches what you actually built.
+```bash
+streamlit run app.py
+```
 
-## Smarter Scheduling
+### First launch
 
-PawPal+ goes beyond a simple task list by applying several scheduling algorithms automatically when a daily plan is generated.
+1. Enter your name and select which time windows are available to you (Early Morning through Night). All windows are selected by default.
+2. Add one or more pets.
+3. Add tasks for each pet, choosing a category, priority, duration, recurrence frequency, and preferred time window.
+4. Click **Generate schedule** to produce a priority-ordered, conflict-checked daily plan.
+5. Mark tasks **Done** as you complete them. Recurring tasks reappear automatically with the next due date.
 
-**Priority-based ordering** — Tasks are ranked CRITICAL > HIGH > MEDIUM > LOW. When multiple tasks compete for the same time window, higher-priority tasks claim slots first, so critical care (medications, meals) is never crowded out by lower-stakes activities.
+---
 
-**Conflict detection** — `Scheduler.detect_conflicts` groups tasks by their preferred time window, greedily assigns start times in priority order, and flags any task that overflows the window's end time. Flagged tasks appear with a warning indicator (⚠️) in the UI so the owner knows a conflict exists before the day starts.
+## Time Windows
 
-**Window-aware placement** — `Scheduler._fit_into_windows` uses a greedy cursor algorithm: each window tracks how far it has been filled, and each task is placed in its preferred window if room remains, or falls back to another available window. This prevents gaps and keeps the schedule tight.
+| Window         | Hours         |
+| -------------- | ------------- |
+| Early Morning  | 05:00 – 07:00 |
+| Morning        | 07:00 – 09:00 |
+| Mid-Morning    | 09:00 – 11:00 |
+| Afternoon      | 12:00 – 14:00 |
+| Late Afternoon | 15:00 – 17:00 |
+| Evening        | 18:00 – 20:30 |
+| Night          | 21:00 – 23:00 |
 
-**Actionable suggestions** — Tasks that cannot fit anywhere trigger `Scheduler._suggest_actions`, which recommends *delegation* (pet sitter) for CRITICAL/HIGH tasks and *postponement* for MEDIUM/LOW tasks, giving the owner a clear next step rather than a silent omission.
-
-**Recurring tasks** — Completing a DAILY, WEEKLY, or MONTHLY task automatically appends a new pending instance with the correct next due date, so recurring care never needs to be re-entered manually.
-
-**Flexible sorting and filtering** — The generated schedule can be re-sorted by time window (earliest first) and filtered by pet or completion status, making it easy to focus on what still needs to be done for a specific animal.
+---
 
 ## Testing PawPal+
 
 The test suite lives in the `tests/` directory and is organized into three focused files covering 131 tests in total.
 
-| File | Tests | What it covers |
-|------|-------|----------------|
-| `test_pawpal.py` | 74 | Unit tests for every class and scheduler method |
-| `test_e2e.py` | 40 | Full lifecycle scenarios (create → schedule → complete → persist) |
-| `test_ui.py` | 17 | Streamlit UI integration tests using `AppTest` |
+| File             | Tests | What it covers                                                    |
+| ---------------- | ----- | ----------------------------------------------------------------- |
+| `test_pawpal.py` | 74    | Unit tests for every class and scheduler method                   |
+| `test_e2e.py`    | 40    | Full lifecycle scenarios (create → schedule → complete → persist) |
+| `test_ui.py`     | 17    | Streamlit UI integration tests using `AppTest`                    |
 
 ### Running the tests
 
@@ -84,20 +150,24 @@ python -m pytest tests/test_pawpal.py::TestConflictDetection -v
 ### What the test suite covers
 
 #### Data models (`TestModels`)
+
 - `Task`, `Pet`, `Owner`, `TimeWindow`, and `ScheduledTask` construct correctly with the right defaults.
 - Task IDs are unique across every `add_task` call.
 
 #### CRUD — Pet task management (`TestPetTaskCRUD`, `TestCRUDErrorCases`)
+
 - `add_task` appends to the pet and returns the new task.
 - `edit_task` updates one or multiple fields by ID.
 - `delete_task` removes the task; calling it with a non-existent ID raises `ValueError`.
 - Editing or deleting a non-existent task/pet ID always raises `ValueError`.
 
 #### CRUD — Owner pet management (`TestOwnerPetCRUD`)
+
 - `add_pet`, `edit_pet`, and `delete_pet` mirror the task CRUD contract.
 - Deleting a pet removes all of its tasks from `get_all_tasks()`.
 
 #### Schedule generation (`TestScheduler`, `TestSchedulerDegenerate`, `TestSchedulerPriorityMultiPet`)
+
 - `generate()` returns all pending tasks assigned to `due_date = target_date` when none is set.
 - CRITICAL-priority tasks appear before lower-priority tasks in the output.
 - Schedules work correctly with zero pets, zero tasks, and zero available time windows.
@@ -105,6 +175,7 @@ python -m pytest tests/test_pawpal.py::TestConflictDetection -v
 - A CRITICAL task from one pet always precedes a HIGH task from another.
 
 #### Sorting correctness (`TestSortingCorrectness`)
+
 - `sort_by_time()` returns tasks in ascending `preferred_window.start_time` order.
 - Tasks with no preferred window are placed after all windowed tasks.
 - Same-start-time ties are broken by descending priority.
@@ -112,6 +183,7 @@ python -m pytest tests/test_pawpal.py::TestConflictDetection -v
 - `generate()` output sorts by `(due_date, priority)` end-to-end.
 
 #### Conflict detection (`TestConflictDetection`)
+
 - Tasks that fit within their window together produce no warnings and an empty `conflicted_task_ids`.
 - When combined durations overflow the window, the lower-priority task is flagged — not the higher-priority one.
 - A task that exactly fills the window (boundary) is **not** flagged (uses `<=` check).
@@ -121,6 +193,7 @@ python -m pytest tests/test_pawpal.py::TestConflictDetection -v
 - `generate()` surfaces `conflicted_task_ids` and `warnings` on the returned `Schedule`.
 
 #### Recurrence logic (`TestRecurringTasks`)
+
 - A DAILY task: completing it appends a new pending copy with `due_date = original + 1 day`.
 - A WEEKLY task: next copy has `due_date = original + 7 days`.
 - A MONTHLY task: next copy has `due_date = original + 30 days`.
@@ -131,12 +204,14 @@ python -m pytest tests/test_pawpal.py::TestConflictDetection -v
 - A double-completion on the same task ID creates two separate recurring instances.
 
 #### Window boundary and overflow (`TestSchedulerWindowEdgeCases`)
+
 - A task whose duration exactly equals the window fits without conflict.
 - When a preferred window is full, the task still appears in `result.tasks`.
 - Tasks longer than any window still appear in the schedule (duration is never a filter).
 - A preferred window label that matches no available window is handled gracefully.
 
 #### JSON persistence (`TestDataStore`, `TestDataStoreEdgeCases`)
+
 - `save_owner` / `load_owner` round-trips preserve ID, name, pets, tasks, and time windows.
 - Tasks with `preferred_window=None` serialize and deserialize without error.
 - `save_schedule` / `load_schedule` round-trips preserve ID, date, and task list.
@@ -146,6 +221,7 @@ python -m pytest tests/test_pawpal.py::TestConflictDetection -v
 - An owner with no pets serializes and reloads correctly.
 
 #### End-to-end lifecycle (`TestE2ESetup`, `TestE2ESchedule`, `TestE2ETaskCompletion`, `TestE2EEdits`, `TestE2EDeletion`, `TestE2EPersistence`)
+
 - Full create-schedule-complete-persist cycle using a realistic two-pet, six-task, three-window scenario.
 - Completing tasks (daily, weekly, once) and verifying recurrence within a live owner state.
 - Editing pet names, ages, task durations, and priorities mid-lifecycle.
@@ -153,6 +229,7 @@ python -m pytest tests/test_pawpal.py::TestConflictDetection -v
 - Full persistence round-trip: owner with two pets and six tasks saves and reloads intact, including the `completed` flag.
 
 #### Streamlit UI integration (`TestAddPet`, `TestAddTask`, `TestScheduleGeneration`)
+
 - Adding a pet via the form populates `st.session_state.owner.pets`.
 - Empty pet/task names show a validation error; the count does not change.
 - Duplicate pet or task names show an error and are rejected.
@@ -167,3 +244,18 @@ python -m pytest tests/test_pawpal.py::TestConflictDetection -v
 **4 / 5 stars**
 
 The core scheduling logic — priority ordering, conflict detection, recurrence, sorting, CRUD, and JSON persistence — is comprehensively covered with unit, edge-case, and end-to-end tests, all 131 passing. One star is withheld because the `MONTHLY` recurrence uses a fixed 30-day delta (not a true calendar month), the double-completion behavior is documented but not guarded, and UI test coverage is limited to form validation and dropdown presence rather than full schedule interaction flows.
+
+---
+
+## Project Structure
+
+```
+app.py              — Streamlit UI
+pawpal_system.py    — Domain model, Scheduler, DataStore
+main.py             — Demo data loader
+tests/
+  test_pawpal.py    — Unit tests
+  test_e2e.py       — End-to-end lifecycle tests
+  test_ui.py        — UI integration tests
+data.json           — Auto-generated persistence file (gitignored)
+```

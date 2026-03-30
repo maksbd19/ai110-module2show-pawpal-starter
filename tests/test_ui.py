@@ -9,6 +9,7 @@ Covers:
 
 import pytest
 from streamlit.testing.v1 import AppTest
+from pawpal_system import Owner
 
 APP_PATH = "app.py"
 
@@ -17,13 +18,45 @@ APP_PATH = "app.py"
 # Helpers
 # ---------------------------------------------------------------------------
 
+def _ensure_widget_states(at: AppTest) -> None:
+    """Pre-populate missing widget states to handle stale element trees.
+
+    When st.rerun() is called inside a button handler, Streamlit clears widget
+    states for widgets that aren't rendered in the interrupted run, but AppTest's
+    element tree still references those widgets.  The next at.run() call invokes
+    get_widget_states() on the stale tree and raises a KeyError for any missing
+    key.  This helper reads the current element tree and seeds any absent keys
+    with sensible defaults so the subsequent run succeeds.
+    """
+    def _present(key: str) -> bool:
+        try:
+            at.session_state[key]
+            return True
+        except (KeyError, AttributeError):
+            return False
+
+    for sb in at.selectbox:
+        if sb.key and not _present(sb.key):
+            at.session_state[sb.key] = sb.options[0] if sb.options else None
+    for ti in at.text_input:
+        if ti.key and not _present(ti.key):
+            at.session_state[ti.key] = ""
+    for ni in at.number_input:
+        if ni.key and not _present(ni.key):
+            at.session_state[ni.key] = 0
+
+
 def click(at: AppTest, label: str) -> AppTest:
     """Click the first button whose label matches, then run."""
+    _ensure_widget_states(at)
     btn = next(b for b in at.button if b.label == label)
     return btn.click().run()
 
 
 def add_pet(at: AppTest, name: str, species: str = "dog", age: int = 2) -> AppTest:
+    at.session_state["show_add_pet_form"] = True
+    _ensure_widget_states(at)
+    at.run()
     fk = at.session_state["pet_form_key"]
     at.text_input(key=f"pet_name_{fk}").set_value(name)
     at.selectbox(key=f"pet_species_{fk}").set_value(species)
@@ -33,6 +66,9 @@ def add_pet(at: AppTest, name: str, species: str = "dog", age: int = 2) -> AppTe
 
 def add_task(at: AppTest, name: str, pet: str, category: str = "food",
              priority: str = "high", duration: int = 10) -> AppTest:
+    at.session_state["show_add_task_form"] = True
+    _ensure_widget_states(at)
+    at.run()
     tfk = at.session_state["task_form_key"]
     at.text_input(key=f"task_name_{tfk}").set_value(name)
     at.selectbox(key=f"task_pet_{tfk}").set_value(pet)
@@ -49,6 +85,9 @@ def add_task(at: AppTest, name: str, pet: str, category: str = "food",
 @pytest.fixture
 def app():
     at = AppTest.from_file(APP_PATH)
+    # Pre-seed a fresh owner so the app never calls load_from_json,
+    # preventing data.json contamination between test runs.
+    at.session_state["owner"] = Owner(name="Test User")
     at.run()
     return at
 
@@ -85,6 +124,8 @@ class TestAddPet:
         assert len(at.session_state["owner"].pets) == 2
 
     def test_add_pet_empty_name_shows_error(self, app):
+        app.session_state["show_add_pet_form"] = True
+        app.run()
         fk = app.session_state["pet_form_key"]
         app.text_input(key=f"pet_name_{fk}").set_value("   ")
         click(app, "Add pet")
@@ -111,6 +152,9 @@ class TestAddTask:
         assert any(t.name == "Morning Walk" for t in tasks)
 
     def test_add_task_empty_name_shows_error(self, app_with_pet):
+        app_with_pet.session_state["show_add_task_form"] = True
+        _ensure_widget_states(app_with_pet)
+        app_with_pet.run()
         tfk = app_with_pet.session_state["task_form_key"]
         app_with_pet.text_input(key=f"task_name_{tfk}").set_value("   ")
         click(app_with_pet, "Add task")
