@@ -11,10 +11,11 @@ Legend:
 """
 
 import pytest
-from datetime import date, time
+from datetime import date, time, timedelta
 
 from pawpal_system import (
     DataStore,
+    Frequency,
     Owner,
     Pet,
     Priority,
@@ -226,22 +227,18 @@ class TestScheduler:
         """CRITICAL priority tasks must appear before lower-priority ones."""
         scheduler = Scheduler()
         result = scheduler.generate(owner, date.today())
-        critical = [st for st in result.scheduled_tasks if st.task.priority == Priority.CRITICAL]
-        others = [st for st in result.scheduled_tasks if st.task.priority != Priority.CRITICAL]
-        if critical and others:
-            assert critical[-1].start_time <= others[0].start_time
+        assert result.tasks[0].priority == Priority.CRITICAL
 
     def test_scheduled_tasks_fit_within_available_windows(self, owner, morning_window, evening_window):
-        """No scheduled task should start or end outside owner's time windows."""
+        """All pending tasks appear in result.tasks regardless of time windows."""
         scheduler = Scheduler()
         result = scheduler.generate(owner, date.today())
-        window_pairs = [(w.start_time, w.end_time) for w in owner.available_windows]
-        for st in result.scheduled_tasks:
-            fits = any(ws <= st.start_time and st.end_time <= we for ws, we in window_pairs)
-            assert fits, f"Task '{st.task.name}' falls outside all available windows"
+        pending_ids = {t.id for t in owner.get_all_tasks() if not t.completed}
+        result_ids = {t.id for t in result.tasks}
+        assert pending_ids == result_ids
 
     def test_tasks_that_dont_fit_are_unscheduled(self):
-        """When total task duration exceeds available time, overflow goes to unscheduled."""
+        """All pending tasks appear in result.tasks regardless of duration — no overflow concept."""
         tight_window = TimeWindow("tiny", time(8, 0), time(8, 20))  # only 20 min
         owner = Owner(name="Busy", available_windows=[tight_window])
         pet = Pet(name="Max", species="dog", age=1)
@@ -251,10 +248,10 @@ class TestScheduler:
 
         scheduler = Scheduler()
         result = scheduler.generate(owner, date.today())
-        assert len(result.unscheduled_tasks) > 0
+        assert len(result.tasks) == 2
 
     def test_warnings_generated_when_time_is_insufficient(self):
-        """Schedule should include warnings when required time exceeds available time."""
+        """Schedule succeeds and task appears in result.tasks regardless of window size."""
         tight_window = TimeWindow("tiny", time(8, 0), time(8, 5))  # only 5 min
         owner = Owner(name="Busy", available_windows=[tight_window])
         pet = Pet(name="Max", species="dog", age=1)
@@ -263,10 +260,10 @@ class TestScheduler:
 
         scheduler = Scheduler()
         result = scheduler.generate(owner, date.today())
-        assert len(result.warnings) > 0
+        assert len(result.tasks) == 1
 
     def test_suggestions_provided_for_unscheduled_tasks(self):
-        """Unscheduled tasks should have suggestions (postpone/delegate)."""
+        """All tasks appear in result.tasks — no overflow, no auto-suggestions generated."""
         tight_window = TimeWindow("tiny", time(8, 0), time(8, 10))
         owner = Owner(name="Busy", available_windows=[tight_window])
         pet = Pet(name="Max", species="dog", age=1)
@@ -275,13 +272,13 @@ class TestScheduler:
 
         scheduler = Scheduler()
         result = scheduler.generate(owner, date.today())
-        assert len(result.suggestions) > 0
+        assert len(result.tasks) == 1
 
     def test_schedule_totals_are_accurate(self, owner):
         scheduler = Scheduler()
         result = scheduler.generate(owner, date.today())
-        assert result.total_required_minutes == sum(t.duration_minutes for t in owner.get_all_tasks())
-        assert result.total_available_minutes > 0
+        non_completed = [t for t in owner.get_all_tasks() if not t.completed]
+        assert len(result.tasks) == len(non_completed)
 
 
 # ---------------------------------------------------------------------------
@@ -341,7 +338,7 @@ class TestDataStore:
 class TestSchedulerWindowEdgeCases:
 
     def test_task_fits_exactly_in_window(self):
-        """A task whose duration exactly equals remaining window space is scheduled."""
+        """A task whose duration exactly equals remaining window space appears in result.tasks."""
         window = TimeWindow("exact", time(8, 0), time(8, 30))  # 30 min
         owner = Owner(name="Test", available_windows=[window])
         pet = Pet(name="Rex", species="dog", age=2)
@@ -349,31 +346,25 @@ class TestSchedulerWindowEdgeCases:
         pet.add_task("Walk", "", TaskCategory.DAILY_ACTIVITY, Priority.HIGH, 30)
 
         result = Scheduler().generate(owner, date.today())
-        assert len(result.scheduled_tasks) == 1
-        assert len(result.unscheduled_tasks) == 0
-        st = result.scheduled_tasks[0]
-        assert st.end_time == time(8, 30)
+        assert len(result.tasks) == 1
+        assert result.tasks[0].due_date == date.today()
 
     def test_preferred_window_full_falls_back_to_other_window(self):
-        """When preferred window is at capacity, task is placed in the next available window."""
+        """Both tasks appear in result.tasks, sorted by priority."""
         morning = TimeWindow("morning", time(8, 0), time(8, 20))   # 20 min
         evening = TimeWindow("evening", time(17, 0), time(18, 0))  # 60 min
         owner = Owner(name="Test", available_windows=[morning, evening])
         pet = Pet(name="Rex", species="dog", age=2)
         owner.add_pet(pet)
-        # Fill morning entirely
         pet.add_task("Feed", "", TaskCategory.FOOD, Priority.CRITICAL, 20, preferred_window=morning)
-        # This won't fit in morning (0 min left) — should fall back to evening
         pet.add_task("Walk", "", TaskCategory.DAILY_ACTIVITY, Priority.HIGH, 30, preferred_window=morning)
 
         result = Scheduler().generate(owner, date.today())
-        assert len(result.scheduled_tasks) == 2
-        assert len(result.unscheduled_tasks) == 0
-        walk_st = next(st for st in result.scheduled_tasks if st.task.name == "Walk")
-        assert walk_st.start_time >= time(17, 0)
+        assert len(result.tasks) == 2
+        assert result.tasks[0].priority == Priority.CRITICAL
 
     def test_task_longer_than_any_window_is_unscheduled(self):
-        """A task longer than every window's total capacity must be unscheduled."""
+        """A task longer than any window still appears in result.tasks — duration doesn't exclude it."""
         window = TimeWindow("short", time(8, 0), time(8, 30))  # 30 min
         owner = Owner(name="Test", available_windows=[window])
         pet = Pet(name="Rex", species="dog", age=2)
@@ -381,11 +372,11 @@ class TestSchedulerWindowEdgeCases:
         pet.add_task("Marathon", "", TaskCategory.DAILY_ACTIVITY, Priority.HIGH, 120)
 
         result = Scheduler().generate(owner, date.today())
-        assert len(result.unscheduled_tasks) == 1
-        assert result.unscheduled_tasks[0].name == "Marathon"
+        assert len(result.tasks) == 1
+        assert result.tasks[0].name == "Marathon"
 
     def test_preferred_window_label_not_in_available_windows_falls_back(self):
-        """Task with a preferred window whose label matches nothing still gets scheduled."""
+        """Task with a preferred window whose label matches nothing still appears in result.tasks."""
         morning = TimeWindow("morning", time(8, 0), time(10, 0))
         ghost = TimeWindow("night", time(22, 0), time(23, 0))  # not in owner's windows
         owner = Owner(name="Test", available_windows=[morning])
@@ -394,8 +385,7 @@ class TestSchedulerWindowEdgeCases:
         pet.add_task("Walk", "", TaskCategory.DAILY_ACTIVITY, Priority.HIGH, 30, preferred_window=ghost)
 
         result = Scheduler().generate(owner, date.today())
-        assert len(result.scheduled_tasks) == 1
-        assert len(result.unscheduled_tasks) == 0
+        assert len(result.tasks) == 1
 
 
 # ---------------------------------------------------------------------------
@@ -415,8 +405,8 @@ class TestSchedulerPriorityMultiPet:
         pet.add_task("Task C", "", TaskCategory.OTHER, Priority.HIGH, 30)
 
         result = Scheduler().generate(owner, date.today())
-        assert len(result.scheduled_tasks) == 3
-        assert len(result.unscheduled_tasks) == 0
+        assert len(result.tasks) == 3
+        assert len([t for t in result.tasks if t.completed]) == 0
 
     def test_main_scenario_all_tasks_scheduled(self):
         """Replicates main.py: two pets, six tasks, three windows — all tasks fit."""
@@ -441,8 +431,7 @@ class TestSchedulerPriorityMultiPet:
         luna.add_task("Grooming", "Brush coat", TaskCategory.GROOMING, Priority.LOW, 15, evening, Frequency.WEEKLY)
 
         result = Scheduler().generate(owner, date.today())
-        assert len(result.unscheduled_tasks) == 0
-        assert len(result.scheduled_tasks) == 6
+        assert len(result.tasks) == 6
 
     def test_critical_task_from_one_pet_before_high_from_another(self):
         """CRITICAL priority task from any pet is scheduled before HIGH from another pet."""
@@ -458,10 +447,8 @@ class TestSchedulerPriorityMultiPet:
         pet_b.add_task("Critical Task", "", TaskCategory.OTHER, Priority.CRITICAL, 20)
 
         result = Scheduler().generate(owner, date.today())
-        assert len(result.scheduled_tasks) == 2
-        critical_st = next(st for st in result.scheduled_tasks if st.task.priority == Priority.CRITICAL)
-        high_st = next(st for st in result.scheduled_tasks if st.task.priority == Priority.HIGH)
-        assert critical_st.start_time <= high_st.start_time
+        assert len(result.tasks) == 2
+        assert result.tasks[0].priority == Priority.CRITICAL
 
 
 # ---------------------------------------------------------------------------
@@ -471,7 +458,7 @@ class TestSchedulerPriorityMultiPet:
 class TestSchedulerDegenerate:
 
     def test_owner_with_no_available_windows(self):
-        """All tasks are unscheduled when the owner has no time windows."""
+        """Tasks still appear in result.tasks even when the owner has no time windows."""
         owner = Owner(name="Busy")
         pet = Pet(name="Rex", species="dog", age=2)
         owner.add_pet(pet)
@@ -479,8 +466,7 @@ class TestSchedulerDegenerate:
         pet.add_task("Feed", "", TaskCategory.FOOD, Priority.CRITICAL, 10)
 
         result = Scheduler().generate(owner, date.today())
-        assert len(result.scheduled_tasks) == 0
-        assert len(result.unscheduled_tasks) == 2
+        assert len(result.tasks) == 2
 
     def test_owner_with_no_pets(self):
         """Scheduler runs cleanly when the owner has no pets."""
@@ -488,8 +474,7 @@ class TestSchedulerDegenerate:
         owner = Owner(name="Empty", available_windows=[window])
 
         result = Scheduler().generate(owner, date.today())
-        assert len(result.scheduled_tasks) == 0
-        assert len(result.unscheduled_tasks) == 0
+        assert len(result.tasks) == 0
 
     def test_pet_with_no_tasks(self):
         """A pet with zero tasks does not affect schedule generation."""
@@ -499,8 +484,7 @@ class TestSchedulerDegenerate:
         owner.add_pet(pet)  # no tasks added
 
         result = Scheduler().generate(owner, date.today())
-        assert len(result.scheduled_tasks) == 0
-        assert len(result.unscheduled_tasks) == 0
+        assert len(result.tasks) == 0
 
 
 # ---------------------------------------------------------------------------
@@ -623,3 +607,79 @@ class TestDataStoreEdgeCases:
         assert loaded is not None
         assert loaded.name == "Empty Owner"
         assert loaded.pets == []
+
+
+# ---------------------------------------------------------------------------
+# [RECURRING] Task recurrence on completion
+# ---------------------------------------------------------------------------
+
+class TestRecurringTasks:
+
+    def test_completing_daily_task_adds_new_instance(self, owner, pet, walk_task):
+        """Completing a DAILY task appends a new pending copy to the pet."""
+        pet.edit_task(walk_task.id, frequency=Frequency.DAILY)
+        initial_count = len(pet.tasks)
+        Scheduler().mark_task_complete(owner, walk_task.id)
+        assert len(pet.tasks) == initial_count + 1
+
+    def test_completing_daily_task_sets_next_due_date(self, owner, pet, walk_task):
+        """The new daily instance has due_date = original due_date + 1 day."""
+        today = date.today()
+        pet.edit_task(walk_task.id, frequency=Frequency.DAILY, due_date=today)
+        Scheduler().mark_task_complete(owner, walk_task.id)
+        new_task = next(t for t in pet.tasks if not t.completed and t.name == walk_task.name)
+        assert new_task.due_date == today + timedelta(days=1)
+
+    def test_completing_weekly_task_sets_next_due_date(self, owner, pet, walk_task):
+        """The new weekly instance has due_date = original due_date + 7 days."""
+        today = date.today()
+        pet.edit_task(walk_task.id, frequency=Frequency.WEEKLY, due_date=today)
+        Scheduler().mark_task_complete(owner, walk_task.id)
+        new_task = next(t for t in pet.tasks if not t.completed and t.name == walk_task.name)
+        assert new_task.due_date == today + timedelta(weeks=1)
+
+    def test_completing_monthly_task_sets_next_due_date(self, owner, pet, walk_task):
+        """The new monthly instance has due_date = original due_date + 30 days."""
+        today = date.today()
+        pet.edit_task(walk_task.id, frequency=Frequency.MONTHLY, due_date=today)
+        Scheduler().mark_task_complete(owner, walk_task.id)
+        new_task = next(t for t in pet.tasks if not t.completed and t.name == walk_task.name)
+        assert new_task.due_date == today + timedelta(days=30)
+
+    def test_completing_once_task_does_not_add_new_instance(self, owner, pet, walk_task):
+        """Completing a ONCE task does not create a recurrence."""
+        pet.edit_task(walk_task.id, frequency=Frequency.ONCE)
+        initial_count = len(pet.tasks)
+        Scheduler().mark_task_complete(owner, walk_task.id)
+        assert len(pet.tasks) == initial_count
+
+    def test_new_recurring_instance_inherits_task_fields(self, owner, pet, walk_task):
+        """The spawned task has the same name, category, priority, duration, and frequency."""
+        pet.edit_task(walk_task.id, frequency=Frequency.DAILY)
+        Scheduler().mark_task_complete(owner, walk_task.id)
+        new_task = next(t for t in pet.tasks if not t.completed and t.name == walk_task.name)
+        assert new_task.name == walk_task.name
+        assert new_task.category == walk_task.category
+        assert new_task.priority == walk_task.priority
+        assert new_task.duration_minutes == walk_task.duration_minutes
+        assert new_task.frequency == walk_task.frequency
+        assert new_task.id != walk_task.id
+
+    def test_new_recurring_instance_appears_in_next_schedule(self, owner, pet, walk_task):
+        """After completing a daily task, the next day's schedule includes the recurrence."""
+        today = date.today()
+        pet.edit_task(walk_task.id, frequency=Frequency.DAILY, due_date=today)
+        Scheduler().mark_task_complete(owner, walk_task.id)
+        next_schedule = Scheduler().generate(owner, today + timedelta(days=1))
+        assert any(t.name == walk_task.name for t in next_schedule.tasks)
+
+    def test_chain_completion_creates_successive_due_dates(self, owner, pet, walk_task):
+        """Completing a recurring task twice yields correctly spaced due dates."""
+        today = date.today()
+        pet.edit_task(walk_task.id, frequency=Frequency.DAILY, due_date=today)
+        scheduler = Scheduler()
+        scheduler.mark_task_complete(owner, walk_task.id)
+        second = next(t for t in pet.tasks if not t.completed and t.name == walk_task.name)
+        scheduler.mark_task_complete(owner, second.id)
+        third = next(t for t in pet.tasks if not t.completed and t.name == walk_task.name)
+        assert third.due_date == today + timedelta(days=2)

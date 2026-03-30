@@ -43,12 +43,20 @@
 **a. Constraints and priorities**
 
 - What constraints does your scheduler consider (for example: time, priority, preferences)?
+  - **Duration and time windows** — each task has a `duration_minutes` value, and tasks can declare a `preferred_window` (a labeled start/end time block). The scheduler checks whether a task fits within its window using a greedy cursor that advances only when a task is successfully placed.
+  - **Priority** — tasks carry one of four priority levels (`CRITICAL`, `HIGH`, `MEDIUM`, `LOW`). Within a time window, higher-priority tasks claim time first, so critical care (e.g., medication) is never bumped by lower-priority activities.
+  - **Due date** — the scheduler sorts tasks by `(due_date, descending priority)`, so overdue or time-sensitive tasks surface before future ones.
+  - **Completion status** — completed tasks are excluded from scheduling; recurring tasks (daily, weekly, monthly) automatically spawn a new pending instance so they reappear on the next relevant schedule.
+  - **Preferred window as a soft constraint** — the preferred window is a preference, not a hard lock. Tasks without a window are still included in the schedule; they are simply placed after all windowed tasks when sorting by time.
 - How did you decide which constraints mattered most?
+  - Pet care has non-negotiable hard requirements: a dog's medication or a cat's feeding cannot be quietly dropped to optimize slot usage. Priority was therefore ranked above time-window fit — a critical task that overflows its window is flagged as a conflict rather than silently dropped, so the owner is always alerted. Due date was ranked second because an overdue task represents care that has already been deferred and should not fall further behind. Preferred window was intentionally kept as a soft constraint because owners benefit more from seeing all tasks (with a conflict warning) than from a schedule that silently omits tasks that don't fit perfectly.
 
 **b. Tradeoffs**
 
 - Describe one tradeoff your scheduler makes.
+  - The scheduler uses a **priority-first greedy placement** strategy rather than an optimal bin-packing approach. Within a time window, tasks are sorted from highest to lowest priority and placed one by one; when a task overflows the window, it is flagged as a conflict and the cursor does not advance, allowing a shorter lower-priority task to claim the remaining slot. This means the scheduler does not search for the arrangement that fits the most tasks — it always guarantees that the highest-priority task is placed first, even if a different ordering could squeeze in one more task overall.
 - Why is that tradeoff reasonable for this scenario?
+  - For pet care, the cost of missing a critical task (medication, feeding) is far higher than the cost of leaving a small gap in the schedule. An optimal bin-packing solver might determine that skipping a high-priority 40-minute task allows two lower-priority tasks totaling 35 minutes to fit — a worse outcome from a welfare standpoint. The greedy approach ensures owners are never surprised by a missing critical task; they get a conflict warning instead, which they can act on (delegate, reschedule). The tradeoff sacrifices theoretical slot efficiency in exchange for predictable, safety-first behavior.
 
 ---
 

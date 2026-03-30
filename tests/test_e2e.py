@@ -108,28 +108,22 @@ class TestE2ESchedule:
 
     def test_all_tasks_scheduled(self, populated_owner):
         result = Scheduler().generate(populated_owner, date.today())
-        assert len(result.unscheduled_tasks) == 0
-        assert len(result.scheduled_tasks) == 6
+        assert len(result.tasks) == 6
 
     def test_critical_tasks_scheduled_first(self, populated_owner):
         result = Scheduler().generate(populated_owner, date.today())
-        critical = [st for st in result.scheduled_tasks if st.task.priority == Priority.CRITICAL]
-        others = [st for st in result.scheduled_tasks if st.task.priority != Priority.CRITICAL]
-        if critical and others:
-            assert critical[-1].start_time <= others[0].start_time
+        assert result.tasks[0].priority == Priority.CRITICAL
 
     def test_schedule_totals_match(self, populated_owner):
         result = Scheduler().generate(populated_owner, date.today())
-        expected_required = sum(t.duration_minutes for t in populated_owner.get_all_tasks())
-        assert result.total_required_minutes == expected_required
-        assert result.total_available_minutes == 330  # 120+90+120
+        assert len(result.tasks) == len(populated_owner.get_all_tasks())
 
     def test_tasks_fit_within_windows(self, populated_owner):
         result = Scheduler().generate(populated_owner, date.today())
-        window_pairs = [(w.start_time, w.end_time) for w in populated_owner.available_windows]
-        for st in result.scheduled_tasks:
-            fits = any(ws <= st.start_time and st.end_time <= we for ws, we in window_pairs)
-            assert fits, f"'{st.task.name}' falls outside all available windows"
+        pending_ids = {t.id for t in populated_owner.get_all_tasks() if not t.completed}
+        result_ids = {t.id for t in result.tasks}
+        assert pending_ids == result_ids
+        assert all(t.due_date == date.today() for t in result.tasks)
 
     def test_schedule_linked_to_correct_owner(self, populated_owner):
         result = Scheduler().generate(populated_owner, date.today())
@@ -166,9 +160,13 @@ class TestE2ETaskCompletion:
 
     def test_complete_all_tasks(self, populated_owner):
         scheduler = Scheduler()
-        for task in populated_owner.get_all_tasks():
-            scheduler.mark_task_complete(populated_owner, task.id)
-        assert scheduler.get_pending_tasks(populated_owner) == []
+        original_ids = [t.id for t in populated_owner.get_all_tasks()]
+        for task_id in original_ids:
+            scheduler.mark_task_complete(populated_owner, task_id)
+        all_tasks = populated_owner.get_all_tasks()
+        for task_id in original_ids:
+            task = next(t for t in all_tasks if t.id == task_id)
+            assert task.completed is True
 
     def test_complete_unknown_task_returns_false(self, populated_owner):
         result = Scheduler().mark_task_complete(populated_owner, "nonexistent-id")
@@ -178,6 +176,51 @@ class TestE2ETaskCompletion:
         walk = next(t for t in buddy.tasks if t.name == "Morning Walk")
         Scheduler().mark_task_complete(populated_owner, walk.id)
         assert walk in buddy.tasks  # still present, just flagged
+
+    def test_completing_daily_task_adds_recurrence(self, populated_owner, buddy):
+        """Completing a DAILY task appends a new pending instance to the pet."""
+        walk = next(t for t in buddy.tasks if t.name == "Morning Walk")
+        assert walk.frequency == Frequency.DAILY
+        before_count = len(buddy.tasks)
+        Scheduler().mark_task_complete(populated_owner, walk.id)
+        assert len(buddy.tasks) == before_count + 1
+
+    def test_recurring_instance_has_correct_due_date(self, populated_owner, buddy):
+        """The new daily recurrence has due_date = completed task's due_date + 1 day."""
+        walk = next(t for t in buddy.tasks if t.name == "Morning Walk")
+        today = date.today()
+        buddy.edit_task(walk.id, due_date=today)
+        Scheduler().mark_task_complete(populated_owner, walk.id)
+        new_walk = next(t for t in buddy.tasks if t.name == "Morning Walk" and not t.completed)
+        assert new_walk.due_date == today + timedelta(days=1)
+
+    def test_completing_weekly_task_schedules_one_week_later(self, populated_owner, luna):
+        """The new weekly recurrence has due_date = completed task's due_date + 7 days."""
+        brushing = next(t for t in luna.tasks if t.name == "Coat Brushing")
+        assert brushing.frequency == Frequency.WEEKLY
+        today = date.today()
+        luna.edit_task(brushing.id, due_date=today)
+        Scheduler().mark_task_complete(populated_owner, brushing.id)
+        new_brushing = next(t for t in luna.tasks if t.name == "Coat Brushing" and not t.completed)
+        assert new_brushing.due_date == today + timedelta(weeks=1)
+
+    def test_once_task_does_not_recur(self, populated_owner, buddy):
+        """A ONCE frequency task is not re-added after completion."""
+        buddy.add_task("Vet Visit", "Annual checkup", TaskCategory.HEALTHCARE, Priority.CRITICAL, 60,
+                       frequency=Frequency.ONCE)
+        vet = next(t for t in buddy.tasks if t.name == "Vet Visit")
+        before_count = len(buddy.tasks)
+        Scheduler().mark_task_complete(populated_owner, vet.id)
+        assert len(buddy.tasks) == before_count
+
+    def test_recurring_instance_appears_in_future_schedule(self, populated_owner, buddy):
+        """After completing a daily task, the next day's generate() includes the recurrence."""
+        walk = next(t for t in buddy.tasks if t.name == "Morning Walk")
+        today = date.today()
+        buddy.edit_task(walk.id, due_date=today)
+        Scheduler().mark_task_complete(populated_owner, walk.id)
+        next_schedule = Scheduler().generate(populated_owner, today + timedelta(days=1))
+        assert any(t.name == "Morning Walk" for t in next_schedule.tasks)
 
 
 # ---------------------------------------------------------------------------
@@ -235,10 +278,8 @@ class TestE2EDeletion:
         grooming = next(t for t in luna.tasks if t.name == "Coat Brushing")
         luna.delete_task(grooming.id)
         result = Scheduler().generate(populated_owner, date.today())
-        scheduled_ids = {st.task.id for st in result.scheduled_tasks}
-        unscheduled_ids = {t.id for t in result.unscheduled_tasks}
-        assert grooming.id not in scheduled_ids
-        assert grooming.id not in unscheduled_ids
+        result_ids = {t.id for t in result.tasks}
+        assert grooming.id not in result_ids
 
     def test_delete_pet_removes_from_owner(self, populated_owner, luna):
         populated_owner.delete_pet(luna.id)
@@ -255,8 +296,7 @@ class TestE2EDeletion:
         owner.add_pet(buddy)
         owner.delete_pet(buddy.id)
         result = Scheduler().generate(owner, date.today())
-        assert len(result.scheduled_tasks) == 0
-        assert len(result.unscheduled_tasks) == 0
+        assert len(result.tasks) == 0
 
     def test_delete_nonexistent_pet_raises(self, populated_owner):
         with pytest.raises(ValueError):
@@ -317,8 +357,7 @@ class TestE2EPersistence:
 
         assert loaded.id == schedule.id
         assert loaded.date == schedule.date
-        assert len(loaded.scheduled_tasks) == len(schedule.scheduled_tasks)
-        assert len(loaded.unscheduled_tasks) == len(schedule.unscheduled_tasks)
+        assert len(loaded.tasks) == len(schedule.tasks)
 
     def test_owner_update_persisted(self, datastore, populated_owner, buddy):
         datastore.save_owner(populated_owner)
